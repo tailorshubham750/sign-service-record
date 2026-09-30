@@ -93,24 +93,60 @@ async function login(username, password) {
         }
 
         await usernameField.click({ clickCount: 3 });
-        await usernameField.type(storedCredentials.username, { delay: 40 });
-        await passwordField.click();
-        await passwordField.type(storedCredentials.password, { delay: 40 });
+        await page.keyboard.press('Backspace');
+        await usernameField.type(storedCredentials.username, { delay: 30 });
+        await passwordField.click({ clickCount: 3 });
+        await page.keyboard.press('Backspace');
+        await passwordField.type(storedCredentials.password, { delay: 30 });
         await submitBtn.click();
 
         await Promise.race([
-          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }),
-          new Promise(r => setTimeout(r, 10000)),
+          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => null),
+          page.waitForFunction(() => {
+            const body = document.body ? document.body.innerText : '';
+            return body.includes('incorrect') || body.includes('Invalid') || body.includes('attempts') || body.includes('Service Requests');
+          }, { timeout: 15000 }).catch(() => null),
+          new Promise(r => setTimeout(r, 8000)),
         ]);
       }
 
-      cookies = await page.cookies();
-      authCookie = cookies.find(c => c.name === 'authorization');
+      // Allow up to 3 seconds for cookies to synchronize
+      for (let i = 0; i < 6; i++) {
+        cookies = await page.cookies();
+        authCookie = cookies.find(c => c.name === 'authorization');
+        if (authCookie && authCookie.value) break;
+        await new Promise(r => setTimeout(r, 500));
+      }
+
       const uidCookie = cookies.find(c => c.name === 'UID');
       usernameCookie = cookies.find(c => c.name === 'username');
 
       if (!authCookie || !authCookie.value) {
-        throw new Error('Authorization cookie not received after login');
+        // Scrape real-time error banner/toast from Servify 360 page
+        const servifyError = await page.evaluate(() => {
+          const els = Array.from(document.querySelectorAll('*'));
+          for (const el of els) {
+            const txt = (el.innerText || '').trim();
+            if (txt && (
+              txt.toLowerCase().includes('incorrect') ||
+              txt.toLowerCase().includes('invalid') ||
+              txt.toLowerCase().includes('not found') ||
+              txt.toLowerCase().includes('attempts remaining') ||
+              txt.toLowerCase().includes('locked') ||
+              txt.toLowerCase().includes('failed')
+            ) && txt.length < 150) {
+              return txt;
+            }
+          }
+          return null;
+        }).catch(() => null);
+
+        if (servifyError) {
+          console.warn(`[ServifyAPI] Servify rejected login for ${storedCredentials.username}: "${servifyError}"`);
+          throw new Error(servifyError);
+        }
+
+        throw new Error('Servify 360 login failed: Your username and/or password is incorrect.');
       }
 
       // Extract qFilter from root attributes
