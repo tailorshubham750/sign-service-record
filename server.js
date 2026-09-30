@@ -964,7 +964,11 @@ app.get('/api/service-requests', requireSupervisorAuth, async (req, res) => {
     const result = await getServiceRequests(search);
     res.json({
       ...result,
-      user: req.supervisorSession
+      user: {
+        username: req.supervisorSession.username,
+        name: req.supervisorSession.name,
+        loggedInAt: req.supervisorSession.loggedInAt
+      }
     });
   } catch (err) {
     console.error('[Server] getServiceRequests error:', err.message);
