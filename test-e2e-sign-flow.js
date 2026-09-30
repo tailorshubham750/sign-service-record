@@ -1,17 +1,21 @@
 const http = require('http');
+const vault = require('./vault');
 
-function postJson(urlPath, data) {
+function postJson(urlPath, data, sessionToken = null) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(data);
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload)
+    };
+    if (sessionToken) headers['x-session-token'] = sessionToken;
+
     const req = http.request({
       hostname: 'localhost',
       port: 4000,
       path: urlPath,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload)
-      }
+      headers
     }, res => {
       let body = '';
       res.on('data', chunk => body += chunk);
@@ -26,9 +30,18 @@ function postJson(urlPath, data) {
   });
 }
 
-function getJson(urlPath) {
+function getJson(urlPath, sessionToken = null) {
   return new Promise((resolve, reject) => {
-    const req = http.get(`http://localhost:4000${urlPath}`, res => {
+    const headers = {};
+    if (sessionToken) headers['x-session-token'] = sessionToken;
+
+    const req = http.request({
+      hostname: 'localhost',
+      port: 4000,
+      path: urlPath,
+      method: 'GET',
+      headers
+    }, res => {
       let body = '';
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
@@ -37,14 +50,24 @@ function getJson(urlPath) {
       });
     });
     req.on('error', reject);
+    req.end();
   });
 }
 
 (async () => {
   console.log('--- STARTING E2E SIGN & AUTO-UPLOAD TEST ---');
 
+  const creds = vault.loadCredentials();
+  console.log('Step 0: Logging in as:', creds.username);
+  const loginRes = await postJson('/api/login', {
+    username: creds.username,
+    password: creds.password
+  });
+  console.log('Login Status:', loginRes.status, 'SessionToken:', loginRes.data.sessionToken?.slice(0, 8));
+  const sessionToken = loginRes.data.sessionToken;
+
   // 1. Fetch CSR list or use HPHDPZXLCXTQ
-  const refId = 'HPHDPZXLCXTQ';
+  const refId = 'D57GG3ZT7ARU';
   console.log(`Step 1: Creating signature link for ${refId}...`);
 
   // Simple 1x1 transparent PNG data URL for test signatures
@@ -54,7 +77,7 @@ function getJson(urlPath) {
     referenceId: refId,
     authorizedSignatoryName: 'Millan Parmar',
     authorizedSignatureDataUrl: sampleSig
-  });
+  }, sessionToken);
 
   console.log('Create Link Status:', linkRes.status);
   console.log('Token created:', linkRes.data.token);

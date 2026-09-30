@@ -176,9 +176,11 @@ async function apiPost(endpoint, body, allowRetry = true) {
       headers: {
         'Content-Type': 'application/json; charset=UTF-8',
         'Cookie': buildCookieHeader(),
+        ...(sessionCookies?.authorization ? { 'authorization': sessionCookies.authorization } : {}),
         'Origin': BASE_URL,
         'Referer': BASE_URL + '/servicerequests',
         'UUID': Math.random().toString(36).substring(2),
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
       },
     };
 
@@ -301,9 +303,7 @@ async function uploadDocument(csrId, fileInput, fileName = 'Signed_Service_Recor
     docType: 'ConsumerServiceRequestDocument',
     clientRefId: `FEWEBA-${Math.random().toString(36).substring(2)}.pdf`,
     'entity-type': 'ConsumerServiceRequest',
-    'entity-id': csrId,
-    UploadedBy: uploadedBy,
-    UploadedByUser: targetUser
+    'entity-id': csrId
   };
 
   const files = [
