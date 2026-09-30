@@ -1,0 +1,40 @@
+# Environment & Secret Vault Files (CRITICAL: NEVER COMMIT)
+.env
+.env.*
+!.env.example
+*.enc
+credentials.enc
+.vault_salt
+
+# Node dependencies
+node_modules/
+sign-app/node_modules/
+
+# Production build outputs
+build/
+dist/
+# Note: sign-app/build is tracked so the server runs out-of-the-box
+
+# Generated PDFs and Service Records
+pdfs/
+signed_pdfs/
+*.pdf
+
+# Logs, Transcripts, and Runtime State
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.system_generated/
+.user_uploaded/
+
+# OS and Editor Artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
