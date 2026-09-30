@@ -68,6 +68,7 @@ function getLocalWifiIp() {
 const vault = require('./vault');
 const initialVaultCreds = vault.loadCredentials();
 const app = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT || 4000;
 let USERNAME = initialVaultCreds.username || process.env.SERVIFY_USERNAME || '';
 let PASSWORD = initialVaultCreds.password || process.env.SERVIFY_PASSWORD || '';
@@ -1173,25 +1174,40 @@ app.post('/api/send-signature-link', requireSupervisorAuth, async (req, res) => 
 
     signatureTokens.set(token, tokenData);
 
-    const protocol = req.protocol;
-    const requestHost = req.get('host') || `localhost:${PORT}`;
-    const port = requestHost.includes(':') ? requestHost.split(':')[1] : PORT;
+    const forwardedProto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const forwardedHost = req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`;
+    const port = forwardedHost.includes(':') ? forwardedHost.split(':')[1] : PORT;
     const wifiIp = getLocalWifiIp();
     const bonjourHost = 'Shubham-Mac.local';
 
+    // Detect if running on a public cloud domain (e.g. sign-service-record.onrender.com)
+    const isCloudHost = forwardedHost && 
+      !forwardedHost.includes('localhost') && 
+      !forwardedHost.startsWith('127.') && 
+      !forwardedHost.startsWith('10.') && 
+      !forwardedHost.startsWith('192.168.') &&
+      !forwardedHost.startsWith('172.');
+
+    const cloudOrigin = isCloudHost ? `${forwardedProto}://${forwardedHost}` : null;
+    const publicOrigin = cloudOrigin || publicTunnelUrl || null;
+
+    const customerCloudLink = publicOrigin ? `${publicOrigin}/sign/${token}` : null;
     const customerTunnelLink = publicTunnelUrl ? `${publicTunnelUrl}/sign/${token}` : null;
     const customerBonjourLink = `http://${bonjourHost}:${port}/sign/${token}`;
     const customerWifiLink = `http://${wifiIp}:${port}/sign/${token}`;
     const customerLocalLink = `http://localhost:${port}/sign/${token}`;
-    const customerLink = customerTunnelLink || customerBonjourLink || customerWifiLink;
+    
+    // Priority: Cloud/Render Domain > Cloudflare Tunnel > Bonjour > LAN Wi-Fi
+    const customerLink = customerCloudLink || customerTunnelLink || customerBonjourLink || customerWifiLink;
 
+    const authorizedCloudLink = publicOrigin ? `${publicOrigin}/sign-auth/${token}` : null;
     const authorizedTunnelLink = publicTunnelUrl ? `${publicTunnelUrl}/sign-auth/${token}` : null;
     const authorizedBonjourLink = `http://${bonjourHost}:${port}/sign-auth/${token}`;
     const authorizedWifiLink = `http://${wifiIp}:${port}/sign-auth/${token}`;
     const authorizedLocalLink = `http://localhost:${port}/sign-auth/${token}`;
-    const authorizedLink = authorizedTunnelLink || authorizedBonjourLink || authorizedWifiLink;
+    const authorizedLink = authorizedCloudLink || authorizedTunnelLink || authorizedBonjourLink || authorizedWifiLink;
 
-    // Prefer tunnelLink (universal for all devices/phones) > bonjourLink (Mac-to-Mac) > wifiLink (IP)
+    // Prefer universal public link
     const link = customerLink;
 
     let qrCodeUrl = '';

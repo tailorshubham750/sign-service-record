@@ -410,6 +410,30 @@ export default function SupervisorDashboard() {
     }
   };
 
+  const resolveCustomerLink = (linkObj) => {
+    if (!linkObj) return '';
+    const token = linkObj.token;
+    if (token && typeof window !== 'undefined' && window.location?.origin) {
+      const origin = window.location.origin;
+      if (!origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+        return `${origin}/sign/${token}`;
+      }
+    }
+    return linkObj.customerLink || linkObj.link || linkObj.customerWifiLink || '';
+  };
+
+  const resolveAuthorizedLink = (linkObj) => {
+    if (!linkObj) return '';
+    const token = linkObj.token;
+    if (token && typeof window !== 'undefined' && window.location?.origin) {
+      const origin = window.location.origin;
+      if (!origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+        return `${origin}/sign-auth/${token}`;
+      }
+    }
+    return linkObj.authorizedLink || (linkObj.link ? linkObj.link.replace('/sign/', '/sign-auth/') : '') || linkObj.authorizedWifiLink || '';
+  };
+
   const handleCopy = (text) => {
     navigator.clipboard.writeText(text);
     setCopySuccess(true);
@@ -588,10 +612,10 @@ export default function SupervisorDashboard() {
                               1. Customer Signature Link (Customer Only):
                             </Typography>
                             <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all', display: 'block', mb: 1, fontFamily: 'monospace' }}>
-                              {item.customerWifiLink || item.customerLink || item.link}
+                              {resolveCustomerLink(item)}
                             </Typography>
                             <Stack direction="row" spacing={1}>
-                              <Button size="small" variant="outlined" onClick={() => handleCopy(item.customerWifiLink || item.customerLink || item.link)}>
+                              <Button size="small" variant="outlined" onClick={() => handleCopy(resolveCustomerLink(item))}>
                                 Copy Customer Link
                               </Button>
                               <Button
@@ -599,7 +623,7 @@ export default function SupervisorDashboard() {
                                 variant="contained"
                                 endIcon={<OpenInNewIcon />}
                                 sx={{ backgroundColor: '#5B2D8E', textTransform: 'none' }}
-                                onClick={() => window.open(item.customerWifiLink || item.customerLink || item.link, '_blank')}
+                                onClick={() => window.open(resolveCustomerLink(item), '_blank')}
                               >
                                 Open Customer Link
                               </Button>
@@ -612,14 +636,14 @@ export default function SupervisorDashboard() {
                               2. Authorized Signatory Link (Supervisor / Tech Only):
                             </Typography>
                             <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all', display: 'block', mb: 1, fontFamily: 'monospace' }}>
-                              {item.authorizedWifiLink || item.authorizedLink || (item.link ? item.link.replace('/sign/', '/sign-auth/') : '')}
+                              {resolveAuthorizedLink(item)}
                             </Typography>
                             <Stack direction="row" spacing={1}>
                               <Button
                                 size="small"
                                 variant="outlined"
                                 sx={{ color: '#701a75', borderColor: '#701a75' }}
-                                onClick={() => handleCopy(item.authorizedWifiLink || item.authorizedLink || (item.link ? item.link.replace('/sign/', '/sign-auth/') : ''))}
+                                onClick={() => handleCopy(resolveAuthorizedLink(item))}
                               >
                                 Copy Auth Link
                               </Button>
@@ -628,7 +652,7 @@ export default function SupervisorDashboard() {
                                 variant="contained"
                                 endIcon={<OpenInNewIcon />}
                                 sx={{ backgroundColor: isPendingAuth ? '#0284c7' : '#701a75', textTransform: 'none' }}
-                                onClick={() => window.open(item.authorizedWifiLink || item.authorizedLink || (item.link ? item.link.replace('/sign/', '/sign-auth/') : ''), '_blank')}
+                                onClick={() => window.open(resolveAuthorizedLink(item), '_blank')}
                               >
                                 {isPendingAuth ? 'Sign as Auth Signatory' : 'Open Auth Link'}
                               </Button>
@@ -885,10 +909,10 @@ export default function SupervisorDashboard() {
             <Paper variant="outlined" sx={{ p: 1.5, my: 1, backgroundColor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <Box sx={{ mr: 1, overflow: 'hidden' }}>
                 <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all', fontWeight: 600, color: '#5B2D8E', fontSize: '0.85rem' }}>
-                  {activeLinkData?.customerWifiLink || activeLinkData?.customerLink || activeLinkData?.link}
+                  {resolveCustomerLink(activeLinkData)}
                 </Typography>
               </Box>
-              <IconButton onClick={() => handleCopy(activeLinkData?.customerWifiLink || activeLinkData?.customerLink || activeLinkData?.link)} color="primary">
+              <IconButton onClick={() => handleCopy(resolveCustomerLink(activeLinkData))} color="primary">
                 <ContentCopyIcon fontSize="small" />
               </IconButton>
             </Paper>
@@ -897,7 +921,7 @@ export default function SupervisorDashboard() {
               <Button
                 variant="outlined"
                 size="small"
-                onClick={() => handleCopy(activeLinkData?.customerWifiLink || activeLinkData?.customerLink || activeLinkData?.link)}
+                onClick={() => handleCopy(resolveCustomerLink(activeLinkData))}
                 sx={{ textTransform: 'none' }}
               >
                 Copy Customer Link
@@ -907,7 +931,7 @@ export default function SupervisorDashboard() {
                 size="small"
                 endIcon={<OpenInNewIcon />}
                 sx={{ backgroundColor: '#5B2D8E', textTransform: 'none' }}
-                onClick={() => window.open(activeLinkData?.customerWifiLink || activeLinkData?.customerLink || activeLinkData?.link, '_blank')}
+                onClick={() => window.open(resolveCustomerLink(activeLinkData), '_blank')}
               >
                 Open Customer View
               </Button>
@@ -926,10 +950,10 @@ export default function SupervisorDashboard() {
             <Paper variant="outlined" sx={{ p: 1.5, my: 1, backgroundColor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <Box sx={{ mr: 1, overflow: 'hidden' }}>
                 <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all', fontWeight: 600, color: '#701a75', fontSize: '0.85rem' }}>
-                  {activeLinkData?.authorizedWifiLink || activeLinkData?.authorizedLink || (activeLinkData?.link ? activeLinkData.link.replace('/sign/', '/sign-auth/') : '')}
+                  {resolveAuthorizedLink(activeLinkData)}
                 </Typography>
               </Box>
-              <IconButton onClick={() => handleCopy(activeLinkData?.authorizedWifiLink || activeLinkData?.authorizedLink || (activeLinkData?.link ? activeLinkData.link.replace('/sign/', '/sign-auth/') : ''))} sx={{ color: '#701a75' }}>
+              <IconButton onClick={() => handleCopy(resolveAuthorizedLink(activeLinkData))} sx={{ color: '#701a75' }}>
                 <ContentCopyIcon fontSize="small" />
               </IconButton>
             </Paper>
@@ -938,7 +962,7 @@ export default function SupervisorDashboard() {
               <Button
                 variant="outlined"
                 size="small"
-                onClick={() => handleCopy(activeLinkData?.authorizedWifiLink || activeLinkData?.authorizedLink || (activeLinkData?.link ? activeLinkData.link.replace('/sign/', '/sign-auth/') : ''))}
+                onClick={() => handleCopy(resolveAuthorizedLink(activeLinkData))}
                 sx={{ color: '#701a75', borderColor: '#701a75', textTransform: 'none' }}
               >
                 Copy Auth Link
@@ -948,7 +972,7 @@ export default function SupervisorDashboard() {
                 size="small"
                 endIcon={<OpenInNewIcon />}
                 sx={{ backgroundColor: '#701a75', '&:hover': { backgroundColor: '#581c87' }, textTransform: 'none' }}
-                onClick={() => window.open(activeLinkData?.authorizedWifiLink || activeLinkData?.authorizedLink || (activeLinkData?.link ? activeLinkData.link.replace('/sign/', '/sign-auth/') : ''), '_blank')}
+                onClick={() => window.open(resolveAuthorizedLink(activeLinkData), '_blank')}
               >
                 Open & Sign as Authorized Signatory
               </Button>
