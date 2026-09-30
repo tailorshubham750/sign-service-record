@@ -1,0 +1,9 @@
+node_modules
+sign-app/node_modules
+.env
+*.enc
+credentials.enc
+.vault_salt
+signed_pdfs
+.git
+.DS_Store
