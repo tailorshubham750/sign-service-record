@@ -778,42 +778,40 @@ function injectSignatureIntoJobsheet(html, customerSignatureUrl, authorizedSigna
   return html;
 }
 
-// Generate real A4 PDF matching Servify reference PDF 100% (Strictly 1 Page, Full-Width)
 async function generatePDF(html) {
   const launchOptions = {
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-zygote',
+      '--single-process'
+    ]
   };
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
   }
   const browser = await puppeteer.launch(launchOptions);
 
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1200, height: 1600 });
-  await page.setContent(html, { waitUntil: 'networkidle0' });
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1200, height: 1600 });
+    await page.setContent(html, { waitUntil: 'load', timeout: 15000 });
 
-  let pdfBuffer = null;
-  // Full-width scaling (1.0 down to 0.94) strictly guaranteeing 1 page A4 layout identical to Pic 1
-  for (const s of [1.0, 0.98, 0.96, 0.94]) {
-    pdfBuffer = await page.pdf({
+    const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      scale: s,
+      scale: 0.96,
       margin: { top: 0, bottom: 0, left: 0, right: 0 }
     });
 
-    try {
-      const doc = await PDFDocument.load(pdfBuffer);
-      if (doc.getPageCount() === 1) {
-        console.log(`[PDF] Generated 100% full-width single-page A4 PDF with scale ${s}`);
-        break;
-      }
-    } catch {}
+    console.log('[PDF] Generated 100% full-width single-page A4 PDF');
+    return pdfBuffer;
+  } finally {
+    try { await browser.close(); } catch {}
   }
-
-  await browser.close();
-  return pdfBuffer;
 }
 
 // ──────────────────────────────────────────────
@@ -1451,58 +1449,17 @@ app.post('/api/submit-signature/:token', async (req, res) => {
     tokenData.signedJobsheetHtml = signedHtml;
     tokenData.jobsheetHtml = signedHtml;
 
-    // Generate actual A4 PDF
+    // Generate actual A4 PDF filename
     const pdfDatePrefix = formatDateForFilename(authDate);
     const pdfFilename = `${pdfDatePrefix}_${tokenData.referenceId}_JobSheet.pdf`;
     const pdfPath = path.join(PDF_DIR, pdfFilename);
-
-    let pdfBase64 = '';
-    try {
-      const pdfBuffer = await generatePDF(signedHtml);
-      fs.writeFileSync(pdfPath, pdfBuffer);
-      pdfBase64 = pdfBuffer.toString('base64');
-      tokenData.pdfFilename = pdfFilename;
-      console.log(`[Server] Generated Final PDF with BOTH signatures: ${pdfPath} (${pdfBuffer.length} bytes)`);
-    } catch (pdfErr) {
-      console.error('[Server] PDF generation error:', pdfErr.message);
-    }
-
-    // Auto-upload to Servify 360 strictly under the logged-in user account
-    try {
-      const uploaderUser = tokenData.uploaderUsername || USERNAME;
-      const uploaderPass = tokenData.uploaderPassword || PASSWORD;
-      const uploaderName = tokenData.uploaderName || formatDisplayName(uploaderUser);
-
-      console.log(`[Server] Uploading document to Servify 360 strictly as logged-in user: ${uploaderUser} (${uploaderName})...`);
-      await ensureSession(uploaderUser, uploaderPass, true);
-      const fileBufferToUpload = fs.existsSync(pdfPath) ? fs.readFileSync(pdfPath) : Buffer.from(pdfBase64, 'base64');
-      
-      const uploadResult = await uploadDocument(
-        tokenData.csrId,
-        fileBufferToUpload,
-        pdfFilename,
-        {
-          username: uploaderUser,
-          password: uploaderPass,
-          uploadedBy: uploaderName
-        }
-      );
-      console.log(`[Server] Uploaded finalized PDF to Servify as ${uploaderName} (${uploaderUser}):`, uploadResult.status);
-      tokenData.servifyUploadStatus = 'uploaded';
-      tokenData.uploadResult = uploadResult.data;
-      tokenData.servifyDocId = uploadResult.docID;
-      tokenData.servifyFileUrl = uploadResult.fileUrl;
-      tokenData.uploadedBy = uploaderName;
-      tokenData.uploadedByUser = uploaderUser;
-    } catch (uploadErr) {
-      console.error('[Server] Servify upload error:', uploadErr.message);
-      tokenData.servifyUploadStatus = 'upload_failed: ' + uploadErr.message;
-    }
-
+    tokenData.pdfFilename = pdfFilename;
+    tokenData.servifyUploadStatus = 'processing';
     signatureTokens.set(req.params.token, tokenData);
 
-    console.log(`[Server] Record #${tokenData.referenceId} completely signed by BOTH parties. Link expired and uploaded.`);
+    console.log(`[Server] Record #${tokenData.referenceId} completely signed by BOTH parties. Link expired.`);
 
+    // Respond immediately to browser to prevent gateway timeout / hanging
     res.json({
       success: true,
       customerSigned: true,
@@ -1510,12 +1467,66 @@ app.post('/api/submit-signature/:token', async (req, res) => {
       signed: true,
       expired: true,
       status: 'completed',
-      message: 'Both customer and authorized signatures completed. Link expired and document uploaded to Servify 360.',
+      message: 'Both customer and authorized signatures completed successfully.',
       referenceId: tokenData.referenceId,
       pdfFilename,
       pdfUrl: `/api/download-pdf/${tokenData.token}`,
-      servifyUploadStatus: tokenData.servifyUploadStatus
+      servifyUploadStatus: 'processing'
     });
+
+    // Run PDF generation & Servify 360 upload in background
+    (async () => {
+      try {
+        let pdfBuffer = null;
+        try {
+          pdfBuffer = await generatePDF(signedHtml);
+          fs.writeFileSync(pdfPath, pdfBuffer);
+          console.log(`[Server] Generated Final PDF with BOTH signatures: ${pdfPath} (${pdfBuffer.length} bytes)`);
+        } catch (pdfErr) {
+          console.error('[Server] PDF generation error:', pdfErr.message);
+        }
+
+        // Auto-upload to Servify 360 strictly under the logged-in user account
+        try {
+          const uploaderUser = tokenData.uploaderUsername || USERNAME;
+          const uploaderPass = tokenData.uploaderPassword || PASSWORD;
+          const uploaderName = tokenData.uploaderName || formatDisplayName(uploaderUser);
+
+          console.log(`[Server] Uploading document to Servify 360 strictly as logged-in user: ${uploaderUser} (${uploaderName})...`);
+          await ensureSession(uploaderUser, uploaderPass, false);
+          const fileBufferToUpload = (pdfBuffer && pdfBuffer.length) ? pdfBuffer : (fs.existsSync(pdfPath) ? fs.readFileSync(pdfPath) : null);
+          
+          if (fileBufferToUpload) {
+            const uploadResult = await uploadDocument(
+              tokenData.csrId,
+              fileBufferToUpload,
+              pdfFilename,
+              {
+                username: uploaderUser,
+                password: uploaderPass,
+                uploadedBy: uploaderName
+              }
+            );
+            console.log(`[Server] Uploaded finalized PDF to Servify as ${uploaderName} (${uploaderUser}):`, uploadResult.status);
+            tokenData.servifyUploadStatus = 'uploaded';
+            tokenData.uploadResult = uploadResult.data;
+            tokenData.servifyDocId = uploadResult.docID;
+            tokenData.servifyFileUrl = uploadResult.fileUrl;
+            tokenData.uploadedBy = uploaderName;
+            tokenData.uploadedByUser = uploaderUser;
+          } else {
+            tokenData.servifyUploadStatus = 'pdf_failed';
+          }
+        } catch (uploadErr) {
+          console.error('[Server] Servify upload error:', uploadErr.message);
+          tokenData.servifyUploadStatus = 'upload_failed: ' + uploadErr.message;
+        }
+
+        signatureTokens.set(req.params.token, tokenData);
+      } catch (bgErr) {
+        console.error('[Server] Background finalize error:', bgErr.message);
+      }
+    })();
   } catch (err) {
     console.error('[Server] Finalize signature error:', err.message);
     res.status(500).json({ success: false, error: err.message });

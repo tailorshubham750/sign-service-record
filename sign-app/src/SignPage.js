@@ -262,7 +262,14 @@ export default function SignPage({ role: propRole }) {
         })
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text || `Server returned ${res.status} ${res.statusText}`);
+      }
+
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to submit customer signature');
       }
@@ -306,7 +313,14 @@ export default function SignPage({ role: propRole }) {
         })
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text || `Server returned ${res.status} ${res.statusText}`);
+      }
+
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to submit authorized signatory signature');
       }
