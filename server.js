@@ -786,8 +786,7 @@ async function generatePDF(html) {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--no-zygote',
-      '--single-process'
+      '--disable-extensions'
     ]
   };
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
@@ -798,7 +797,9 @@ async function generatePDF(html) {
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1200, height: 1600 });
-    await page.setContent(html, { waitUntil: 'load', timeout: 15000 });
+    // Use domcontentloaded with generous timeout so external tracking/images don't stall PDF generation
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await new Promise(r => setTimeout(r, 600));
 
     const pdfBuffer = await page.pdf({
       format: 'A4',
@@ -807,10 +808,55 @@ async function generatePDF(html) {
       margin: { top: 0, bottom: 0, left: 0, right: 0 }
     });
 
-    console.log('[PDF] Generated 100% full-width single-page A4 PDF');
+    console.log(`[PDF] Generated 100% full-width single-page A4 PDF (${pdfBuffer.length} bytes)`);
     return pdfBuffer;
   } finally {
     try { await browser.close(); } catch {}
+  }
+}
+
+// ── Robust fallback PDF generator using pdf-lib (zero browser dependency)
+async function generateFallbackPdf(tokenData) {
+  try {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([595.28, 841.89]); // A4 dimensions
+    const { width, height } = page.getSize();
+
+    page.drawText('SERVIFY 360 — AUTHORIZED SERVICE RECORD', { x: 45, y: height - 50, size: 14 });
+    page.drawText(`Service Reference: #${tokenData.referenceId || ''}`, { x: 45, y: height - 75, size: 11 });
+    page.drawText(`Customer Name: ${tokenData.customerName || 'Customer'}`, { x: 45, y: height - 95, size: 10 });
+    page.drawText(`Product: ${tokenData.productName || 'Device'}`, { x: 45, y: height - 115, size: 10 });
+    page.drawText(`Signed Date: ${new Date(tokenData.signedAt || Date.now()).toLocaleString('en-IN')}`, { x: 45, y: height - 135, size: 10 });
+
+    // Draw signatures if available
+    if (tokenData.customerSignatureUrl && tokenData.customerSignatureUrl.includes('base64,')) {
+      try {
+        const b64 = tokenData.customerSignatureUrl.replace(/^data:[^;]+;base64,/, '');
+        const img = await pdfDoc.embedPng(Buffer.from(b64, 'base64'));
+        page.drawImage(img, { x: 350, y: height - 250, width: 140, height: 55 });
+        page.drawText("Customer's Signature", { x: 350, y: height - 265, size: 9 });
+      } catch (e) {
+        console.warn('[PDF-Lib] Could not embed customer signature:', e.message);
+      }
+    }
+
+    if (tokenData.authorizedSignatureDataUrl && tokenData.authorizedSignatureDataUrl.includes('base64,')) {
+      try {
+        const b64 = tokenData.authorizedSignatureDataUrl.replace(/^data:[^;]+;base64,/, '');
+        const img = await pdfDoc.embedPng(Buffer.from(b64, 'base64'));
+        page.drawImage(img, { x: 45, y: height - 250, width: 140, height: 55 });
+        page.drawText(`Authorized Signatory: ${tokenData.authorizedSignatoryName || 'Authorized Signatory'}`, { x: 45, y: height - 265, size: 9 });
+      } catch (e) {
+        console.warn('[PDF-Lib] Could not embed authorized signature:', e.message);
+      }
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    console.log(`[PDF-Lib] Generated fallback A4 PDF (${pdfBytes.length} bytes)`);
+    return Buffer.from(pdfBytes);
+  } catch (err) {
+    console.error('[PDF-Lib] Fallback PDF generation failed:', err.message);
+    throw err;
   }
 }
 
@@ -1483,20 +1529,46 @@ app.post('/api/submit-signature/:token', async (req, res) => {
           fs.writeFileSync(pdfPath, pdfBuffer);
           console.log(`[Server] Generated Final PDF with BOTH signatures: ${pdfPath} (${pdfBuffer.length} bytes)`);
         } catch (pdfErr) {
-          console.error('[Server] PDF generation error:', pdfErr.message);
+          console.error('[Server] Puppeteer PDF error:', pdfErr.message, '— falling back to pdf-lib');
+          try {
+            pdfBuffer = await generateFallbackPdf(tokenData);
+            fs.writeFileSync(pdfPath, pdfBuffer);
+            console.log(`[Server] Generated Fallback PDF with BOTH signatures: ${pdfPath} (${pdfBuffer.length} bytes)`);
+          } catch (fbErr) {
+            console.error('[Server] Fallback PDF generation error:', fbErr.message);
+            tokenData.servifyUploadStatus = 'pdf_failed: ' + fbErr.message;
+            signatureTokens.set(req.params.token, tokenData);
+            return;
+          }
         }
 
         // Auto-upload to Servify 360 strictly under the logged-in user account
         try {
-          const uploaderUser = tokenData.uploaderUsername || USERNAME;
-          const uploaderPass = tokenData.uploaderPassword || PASSWORD;
+          const uploaderUser = tokenData.uploaderUsername || USERNAME || initialVaultCreds.username || process.env.SERVIFY_USERNAME;
+          const uploaderPass = tokenData.uploaderPassword || PASSWORD || initialVaultCreds.password || process.env.SERVIFY_PASSWORD;
           const uploaderName = tokenData.uploaderName || formatDisplayName(uploaderUser);
+
+          // If csrId is not yet resolved, fetch dynamically using referenceId
+          if (!tokenData.csrId && tokenData.referenceId) {
+            try {
+              console.log(`[Server] Dynamically looking up CSR ID for #${tokenData.referenceId}...`);
+              await ensureSession(uploaderUser, uploaderPass, false);
+              const srList = await getServiceRequests(tokenData.referenceId);
+              const matched = (srList.requests || []).find(r => r.ReferenceID === tokenData.referenceId);
+              if (matched) {
+                tokenData.csrId = matched.ConsumerServiceRequestID;
+                console.log(`[Server] Found CSR ID: ${tokenData.csrId}`);
+              }
+            } catch (lookupErr) {
+              console.warn('[Server] Dynamic CSR lookup failed:', lookupErr.message);
+            }
+          }
 
           console.log(`[Server] Uploading document to Servify 360 strictly as logged-in user: ${uploaderUser} (${uploaderName})...`);
           await ensureSession(uploaderUser, uploaderPass, false);
           const fileBufferToUpload = (pdfBuffer && pdfBuffer.length) ? pdfBuffer : (fs.existsSync(pdfPath) ? fs.readFileSync(pdfPath) : null);
           
-          if (fileBufferToUpload) {
+          if (fileBufferToUpload && tokenData.csrId) {
             const uploadResult = await uploadDocument(
               tokenData.csrId,
               fileBufferToUpload,
@@ -1514,6 +1586,8 @@ app.post('/api/submit-signature/:token', async (req, res) => {
             tokenData.servifyFileUrl = uploadResult.fileUrl;
             tokenData.uploadedBy = uploaderName;
             tokenData.uploadedByUser = uploaderUser;
+          } else if (!tokenData.csrId) {
+            tokenData.servifyUploadStatus = 'upload_failed: CSR ID could not be determined';
           } else {
             tokenData.servifyUploadStatus = 'pdf_failed';
           }
@@ -1529,6 +1603,82 @@ app.post('/api/submit-signature/:token', async (req, res) => {
     })();
   } catch (err) {
     console.error('[Server] Finalize signature error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/retry-upload/:token — retry PDF generation and Servify 360 upload
+app.post('/api/retry-upload/:token', async (req, res) => {
+  const tokenData = signatureTokens.get(req.params.token);
+  if (!tokenData) {
+    return res.status(404).json({ success: false, error: 'Token not found' });
+  }
+
+  try {
+    const custDate = tokenData.customerSignedAt ? new Date(tokenData.customerSignedAt) : new Date();
+    const authDate = tokenData.authorizedSignedAt ? new Date(tokenData.authorizedSignedAt) : new Date();
+
+    const signedHtml = tokenData.signedJobsheetHtml || tokenData.jobsheetHtml || generateAirPodsServiceRecordHtml(tokenData);
+    const pdfDatePrefix = formatDateForFilename(authDate);
+    const pdfFilename = tokenData.pdfFilename || `${pdfDatePrefix}_${tokenData.referenceId}_JobSheet.pdf`;
+    const pdfPath = path.join(PDF_DIR, pdfFilename);
+    tokenData.pdfFilename = pdfFilename;
+
+    let pdfBuffer = null;
+    try {
+      pdfBuffer = await generatePDF(signedHtml);
+    } catch (pErr) {
+      console.warn('[Server] Retry: Puppeteer PDF failed, using pdf-lib fallback:', pErr.message);
+      pdfBuffer = await generateFallbackPdf(tokenData);
+    }
+    fs.writeFileSync(pdfPath, pdfBuffer);
+
+    const uploaderUser = tokenData.uploaderUsername || USERNAME || initialVaultCreds.username || process.env.SERVIFY_USERNAME;
+    const uploaderPass = tokenData.uploaderPassword || PASSWORD || initialVaultCreds.password || process.env.SERVIFY_PASSWORD;
+    const uploaderName = tokenData.uploaderName || formatDisplayName(uploaderUser);
+
+    if (!tokenData.csrId && tokenData.referenceId) {
+      try {
+        await ensureSession(uploaderUser, uploaderPass, false);
+        const srList = await getServiceRequests(tokenData.referenceId);
+        const matched = (srList.requests || []).find(r => r.ReferenceID === tokenData.referenceId);
+        if (matched) {
+          tokenData.csrId = matched.ConsumerServiceRequestID;
+        }
+      } catch (err) {}
+    }
+
+    await ensureSession(uploaderUser, uploaderPass, false);
+    const uploadResult = await uploadDocument(
+      tokenData.csrId,
+      pdfBuffer,
+      pdfFilename,
+      {
+        username: uploaderUser,
+        password: uploaderPass,
+        uploadedBy: uploaderName
+      }
+    );
+
+    tokenData.servifyUploadStatus = 'uploaded';
+    tokenData.uploadResult = uploadResult.data;
+    tokenData.servifyDocId = uploadResult.docID;
+    tokenData.servifyFileUrl = uploadResult.fileUrl;
+    tokenData.uploadedBy = uploaderName;
+    tokenData.uploadedByUser = uploaderUser;
+    signatureTokens.set(req.params.token, tokenData);
+
+    res.json({
+      success: true,
+      servifyUploadStatus: 'uploaded',
+      docID: uploadResult.docID,
+      fileUrl: uploadResult.fileUrl,
+      pdfFilename
+    });
+  } catch (err) {
+    console.error('[Server] Retry upload failed:', err.message);
+    tokenData.servifyUploadStatus = 'upload_failed: ' + err.message;
+    signatureTokens.set(req.params.token, tokenData);
     res.status(500).json({ success: false, error: err.message });
   }
 });

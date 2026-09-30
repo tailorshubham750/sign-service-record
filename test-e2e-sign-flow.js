@@ -66,8 +66,8 @@ function getJson(urlPath, sessionToken = null) {
   console.log('Login Status:', loginRes.status, 'SessionToken:', loginRes.data.sessionToken?.slice(0, 8));
   const sessionToken = loginRes.data.sessionToken;
 
-  // 1. Fetch CSR list or use HPHDPZXLCXTQ
-  const refId = 'D57GG3ZT7ARU';
+  // 1. Fetch CSR list or use WAU0QP5JNKWU
+  const refId = 'WAU0QP5JNKWU';
   console.log(`Step 1: Creating signature link for ${refId}...`);
 
   // Simple 1x1 transparent PNG data URL for test signatures
