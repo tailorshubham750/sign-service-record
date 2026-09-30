@@ -46,10 +46,14 @@ async function login(username, password) {
 
     if (!browser || !browser.connected) {
       try {
-        browser = await puppeteer.launch({
+        const launchOptions = {
           headless: 'new',
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        });
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+        };
+        if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+          launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        }
+        browser = await puppeteer.launch(launchOptions);
       } catch (err) {
         console.error('[ServifyAPI] Browser launch error:', err.message);
         throw err;

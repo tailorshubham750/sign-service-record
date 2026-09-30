@@ -11,8 +11,8 @@ node_modules/
 sign-app/node_modules/
 
 # Production build outputs
-build/
-dist/
+/build/
+/dist/
 # Note: sign-app/build is tracked so the server runs out-of-the-box
 
 # Generated PDFs and Service Records

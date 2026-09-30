@@ -779,10 +779,14 @@ function injectSignatureIntoJobsheet(html, customerSignatureUrl, authorizedSigna
 
 // Generate real A4 PDF matching Servify reference PDF 100% (Strictly 1 Page, Full-Width)
 async function generatePDF(html) {
-  const browser = await puppeteer.launch({
+  const launchOptions = {
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+  };
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  const browser = await puppeteer.launch(launchOptions);
 
   const page = await browser.newPage();
   await page.setViewport({ width: 1200, height: 1600 });
